@@ -1,17 +1,25 @@
 """Module creates views generate_student and bitcoin converter currency."""
 
-from flask import Flask, request, Response, jsonify
+from flask import Flask, Response, jsonify
 from faker import Faker
 import csv
 import io
 import requests
+from webargs import fields
+from webargs.flaskparser import use_args
 
 app = Flask(__name__)
+
+bitcoin_args = {
+    "currency": fields.Str(load_default="USD"),
+    "count": fields.Int(load_default=1)
+}
 
 
 @app.route('/generate_students', methods=['GET'])
 def generate_students():
     # Read count parameter from GET, default to 10 and cap at 1000
+    from flask import request
     count = request.args.get('count', default=10, type=int)
     count = min(count, 1000)
 
@@ -31,9 +39,10 @@ def generate_students():
 
     # Write records to CSV in memory
     output = io.StringIO()
-    writer = csv.DictWriter(output,
-                            fieldnames=["first_name", "last_name", "email",
-                                        "password", "birthday"])
+    writer = csv.DictWriter(
+        output,
+        fieldnames=["first_name", "last_name", "email", "password", "birthday"]
+    )
     writer.writeheader()
     for student in students:
         student['birthday'] = student['birthday'].isoformat()
@@ -50,35 +59,29 @@ def generate_students():
 
 
 @app.route('/bitcoin_rate', methods=['GET'])
-def get_bitcoin_value():
+@use_args(bitcoin_args, location="query")
+def get_bitcoin_value(args):
     # Get query parameters: currency code (default USD) and count (default 1)
-    currency = request.args.get('currency', default='USD', type=str).upper()
-    count = request.args.get('count', default=1, type=int)
+    currency = args.get("currency", "USD").upper()
+    count = args.get("count", 1)
 
-    url = "https://bitpay.com/api/rates"
+    url = f"https://bitpay.com/api/rates/{currency}"
 
     try:
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
-    except Exception as e:
-        return jsonify(
-            {"error": f"Error fetching bitcoin rates: {str(e)}"}), 500
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Error fetching btc rates: {str(e)}"}), 500
 
-    # Search for the rate corresponding to the input currency code
-    rate = None
-    for item in data:
-        if item.get("code") == currency:
-            rate = item.get("rate")
-            break
-
+    rate = data.get("rate")
     if rate is None:
         return jsonify({"error": f"Currency code {currency} not found."}), 400
 
     # Multiply the bitcoin rate by the count provided
     total_value = rate * count
 
-    # Mapping from currency codes to symbols
+    # Mapping from currency codes to symbols (if API doesn't provide it)
     currency_symbols = {
         "USD": "$",
         "EUR": "€",
